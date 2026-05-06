@@ -92,10 +92,17 @@ just to name a few!...there are much more videos and articles out there just wan
 - [dadwithadeck - How to install Non-Steam Game Launchers on Steam Deck with NonSteamLaunchers](https://dadwithadeck.com/2025/11/24/how-to-install-non-steam-game-launchers-on-steam-deck-with-nonsteamlaunchers/)
 
 <p align="center">
-    ▶️ **YouTube Tutorial** 🡺🡺🡺 <a href="https://youtu.be/sxMmI8I9G_g">Watch here</a> 🡸🡸🡸 ▶️
+    ▶️ <b>YouTube Tutorials</b> 🡺🡺🡺
+    <a href="https://youtu.be/sxMmI8I9G_g">Decky Plugin</a> |
+    <a href="https://www.youtube.com/watch?v=HHdw4u5enrc">GamingOnSteam</a>
+    🡸🡸🡸 ▶️
 </p>
+
 <p align="center">
-    📖 **Step-by-step Article** 🡺🡺🡺 <a href="https://steamdeckhq.com/news/nonsteamlaunchers-adds-scan-support-launchers">here</a> 🡸🡸🡸 📖
+    📖 <b>Step-by-step Articles</b> 🡺🡺🡺
+    <a href="https://steamdeckhq.com/news/nonsteamlaunchers-adds-scan-support-launchers">SteamDeckHQ Guide</a> |
+    <a href="https://gamingonsteam.com/2026/04/30/the-ultimate-guide-to-installing-any-launcher-on-your-steam-deck-nonsteamlaunchers/">GamingOnSteam Guide</a>
+    🡸🡸🡸 📖
 </p>
 
 ---
