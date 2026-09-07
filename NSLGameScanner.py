@@ -6736,14 +6736,12 @@ def get_boot_video(game_name, logged_in_home):
     OVERRIDE_PATH = os.path.expanduser(f'{logged_in_home}/.steam/root/config/uioverrides/movies')
     REQUEST_RETRIES = 5
     API_URL = "https://steamdeckrepo.com/api/posts/all"
-    DOWNLOAD_BASE = "https://steamdeckrepo.com/post/download"
     ssl_ctx = ssl.create_default_context()
 
     def sanitize_filename(filename):
         return re.sub(r'[<>:"/\\|?*]', '_', filename)
 
     def download_video(video, target_dir):
-        """Download video if it does not already exist."""
         sanitized_name = sanitize_filename(video['name'])
         file_path = os.path.join(target_dir, f"{sanitized_name}.webm")
 
@@ -6754,9 +6752,20 @@ def get_boot_video(game_name, logged_in_home):
         os.makedirs(target_dir, exist_ok=True)
 
         download_url = video.get('download_url')
+
         if download_url:
             try:
-                with urllib.request.urlopen(download_url, context=ssl_ctx, timeout=60) as response:
+                req = urllib.request.Request(
+                    download_url,
+                    headers={"User-Agent": "SteamDeckBootFetcher/1.0"}
+                )
+
+                with urllib.request.urlopen(
+                    req,
+                    context=ssl_ctx,
+                    timeout=60
+                ) as response:
+
                     if response.status == 200:
                         with open(file_path, 'wb') as f:
                             while True:
@@ -6764,11 +6773,17 @@ def get_boot_video(game_name, logged_in_home):
                                 if not chunk:
                                     break
                                 f.write(chunk)
+
                         print(f"Downloaded {file_path}")
                     else:
                         print(f"Failed to download {file_path}, status code: {response.status}")
+
+            except urllib.error.HTTPError as e:
+                print(f"Download failed for {file_path}: {e.code} {e.reason}")
+
             except urllib.error.URLError as e:
                 print(f"Download failed for {file_path}: {e}")
+
         else:
             print("No download URL found for video.")
 
@@ -6781,18 +6796,39 @@ def get_boot_video(game_name, logged_in_home):
         data = []
         for attempt in range(REQUEST_RETRIES):
             try:
-                req = urllib.request.Request(API_URL, headers={"User-Agent": "SteamDeckBootFetcher/1.0"})
-                with urllib.request.urlopen(req, context=ssl_ctx, timeout=20) as response:
+                req = urllib.request.Request(
+                    API_URL,
+                    headers={"User-Agent": "SteamDeckBootFetcher/1.0"}
+                )
+
+                with urllib.request.urlopen(
+                    req,
+                    context=ssl_ctx,
+                    timeout=20
+                ) as response:
+
                     if response.status == 200:
-                        data = json.loads(response.read().decode('utf-8')).get('posts', [])
+                        data = json.loads(
+                            response.read().decode('utf-8')
+                        ).get('posts', [])
                         break
+
                     elif response.status == 429:
-                        raise Exception('Rate limit exceeded, try again in a minute')
+                        raise Exception(
+                            'Rate limit exceeded, try again in a minute'
+                        )
+
                     else:
-                        print(f"steamdeckrepo fetch failed, status={response.status}")
+                        print(
+                            f"steamdeckrepo fetch failed, "
+                            f"status={response.status}"
+                        )
+
             except urllib.error.URLError as e:
                 print(f"Request failed: {e}")
+
             time.sleep(2)  # brief wait before retry
+
         else:
             raise Exception("Retry attempts exceeded")
 
@@ -6806,43 +6842,53 @@ def get_boot_video(game_name, logged_in_home):
                         'id': entry['id'],
                         'name': entry['title'],
                         'preview_video': entry['video'],
-                        'download_url': f"{DOWNLOAD_BASE}/{entry['id']}",
+                        'download_url': entry['video'],
                         'target': 'boot',
                         'likes': entry['likes'],
                     }
                     for entry in data
-                    if term in entry['title'].lower() and entry['type'] == 'boot_video'
+                    if term in entry['title'].lower()
+                    and entry['type'] == 'boot_video'
                 ),
-                key=lambda x: x['likes'], reverse=True
+                key=lambda x: x['likes'],
+                reverse=True
             )
 
             if filtered_videos:
                 video = filtered_videos[0]
+
                 print(f"Downloading boot video: {video['name']}")
                 download_video(video, OVERRIDE_PATH)
                 return
 
         # If no video, try first two words of game name
         if len(game_name.split()) > 1:
-            first_two_words = ' '.join(game_name.split()[:2]).lower()
+            first_two_words = ' '.join(
+                game_name.split()[:2]
+            ).lower()
+
             filtered_videos = sorted(
                 (
                     {
                         'id': entry['id'],
                         'name': entry['title'],
                         'preview_video': entry['video'],
-                        'download_url': f"{DOWNLOAD_BASE}/{entry['id']}",
+                        'download_url': entry['video'],
                         'target': 'boot',
                         'likes': entry['likes'],
                     }
                     for entry in data
-                    if first_two_words in entry['title'].lower() and entry['type'] == 'boot_video'
+                    if first_two_words in entry['title'].lower()
+                    and entry['type'] == 'boot_video'
                 ),
-                key=lambda x: x['likes'], reverse=True
+                key=lambda x: x['likes'],
+                reverse=True
             )
 
             if filtered_videos:
                 video = filtered_videos[0]
+
+                print(f"Downloading boot video: {video['name']}")
                 download_video(video, OVERRIDE_PATH)
                 return
 
