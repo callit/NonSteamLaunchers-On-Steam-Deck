@@ -4823,35 +4823,80 @@ if os.path.exists(non_steam_launchers_path):
 #Scanners
 # Epic Games Scanner
 item_dir = f"{logged_in_home}/.local/share/Steam/steamapps/compatdata/{epic_games_launcher}/pfx/drive_c/ProgramData/Epic/EpicGamesLauncher/Data/Manifests/"
-dat_file_path = f"{logged_in_home}/.local/share/Steam/steamapps/compatdata/{epic_games_launcher}/pfx/drive_c/ProgramData/Epic/UnrealEngineLauncher/LauncherInstalled.dat"
+if os.path.exists(item_dir):
 
-if os.path.exists(dat_file_path) and os.path.exists(item_dir):
-    with open(dat_file_path, 'r') as file:
-        dat_data = json.load(file)
-
-    # Epic Game Scanner
     for item_file in os.listdir(item_dir):
-        if item_file.endswith('.item'):
-            with open(os.path.join(item_dir, item_file), 'r') as file:
+        if not item_file.endswith('.item'):
+            continue
+
+        item_file_path = os.path.join(item_dir, item_file)
+
+        try:
+            with open(item_file_path, 'r') as file:
                 item_data = json.load(file)
+        except (json.JSONDecodeError, OSError, KeyError):
+            continue
 
-            # Initialize variables
-            display_name = item_data['DisplayName']
-            app_name = item_data['AppName']
-            exe_path = f"\"{logged_in_home}/.local/share/Steam/steamapps/compatdata/{epic_games_launcher}/pfx/drive_c/Program Files/Epic Games/Launcher/Portal/Binaries/Win64/EpicGamesLauncher.exe\""
-            start_dir = f"\"{logged_in_home}/.local/share/Steam/steamapps/compatdata/{epic_games_launcher}/pfx/drive_c/Program Files/Epic Games/Launcher/Portal/Binaries/Win64/\""
-            launch_options = f"STEAM_COMPAT_DATA_PATH=\"{logged_in_home}/.local/share/Steam/steamapps/compatdata/{epic_games_launcher}/\" %command% -'com.epicgames.launcher://apps/{app_name}?action=launch&silent=true'"
+        display_name = item_data.get('DisplayName', '')
+        app_name = item_data.get('AppName', '')
+        launch_executable = item_data.get('LaunchExecutable', '')
+        install_location = item_data.get('InstallLocation', '')
 
-            # Check if the game is still installed and if the LaunchExecutable is valid, not content-related, and is a .exe file
-            if item_data['LaunchExecutable'].endswith('.exe') and "Content" not in item_data['DisplayName'] and "Content" not in item_data['InstallLocation']:
-                for game in dat_data['InstallationList']:
-                    if game['AppName'] == item_data['AppName']:
-                        create_new_entry(exe_path, display_name, launch_options, start_dir, launcher_name="Epic Games")
-                        track_game(display_name, "Epic Games")
+        if not display_name or not app_name:
+            continue
+
+        if "Content" in display_name or "Content" in install_location:
+            continue
+
+        if not launch_executable.lower().endswith('.exe'):
+            continue
+
+        if install_location:
+            install_location_linux = install_location.replace(
+                "C:\\",
+                f"{logged_in_home}/.local/share/Steam/steamapps/compatdata/{epic_games_launcher}/pfx/drive_c/"
+            ).replace("\\", "/")
+
+            if not os.path.exists(install_location_linux):
+                continue
+
+
+        exe_path = (
+            f"\"{logged_in_home}/.local/share/Steam/steamapps/compatdata/"
+            f"{epic_games_launcher}/pfx/drive_c/Program Files/"
+            f"Epic Games/Launcher/Portal/Binaries/Win64/"
+            f"EpicGamesLauncher.exe\""
+        )
+
+        start_dir = (
+            f"\"{logged_in_home}/.local/share/Steam/steamapps/compatdata/"
+            f"{epic_games_launcher}/pfx/drive_c/Program Files/"
+            f"Epic Games/Launcher/Portal/Binaries/Win64/\""
+        )
+
+        launch_options = (
+            f"STEAM_COMPAT_DATA_PATH="
+            f"\"{logged_in_home}/.local/share/Steam/steamapps/compatdata/"
+            f"{epic_games_launcher}/\" "
+            f"%command% -"
+            f"'com.epicgames.launcher://apps/{app_name}"
+            f"?action=launch&silent=true'"
+        )
+
+        create_new_entry(
+            exe_path,
+            display_name,
+            launch_options,
+            start_dir,
+            launcher_name="Epic Games"
+        )
+
+        track_game(display_name, "Epic Games")
 
 else:
     print("Epic Games Launcher data not found. Skipping Epic Games Scanner.")
-# End of the Epic Games Scanner
+#End of the Epic Games Scanner
+
 
 
 
