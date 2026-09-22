@@ -2673,515 +2673,222 @@ send_ws_text(ws_socket, json.dumps({
 recv_ws_message_for_id(ws_socket, enable_id)
 
 watch_code = r'''if (!window.__watcherInjected) {
-    window.__watcherInjected = true;
+window.__watcherInjected = 1;
 
-    let desktopGameRunning = false;
-    let desktopCurrentAppId = null;
-    let desktopCurrentGameName = null;
+let desktopGameRunning = false, desktopCurrentAppId = null, desktopCurrentGameName = null;
+window.__watcherLedSnapshot = null;
+window.__watcherLedGeneration = 0;
 
-    async function runGameLEDPalette(gameId, gameName) {
-        try {
-            const PALETTE_SIZE = 5;
-            const QUANTIZE = 16;
-            const MIN_DISTANCE = 55;
-            const MAX_SAMPLES = 2e4;
-            const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function runGameLEDPalette(gameId, gameName) {
+    const generation = ++window.__watcherLedGeneration;
 
-            const getSteamRequire = async () => {
-                if (typeof window.__steam_require === "function") {
-                    return window.__steam_require;
-                }
+    try {
+        const [PALETTE_SIZE, QUANTIZE, MIN_DISTANCE, MAX_SAMPLES] = [5,16,55,2e4];
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-                if (typeof window.webpackChunksteamui !== "object") {
-                    throw Error("Steam Webpack runtime not available");
-                }
-
-                return new Promise((resolve, reject) => {
-                    let done = false;
-
-                    const finish = (v, e) => {
-                        if (done) return;
-                        done = true;
-                        e
-                            ? reject(e)
-                            : (window.__steam_require = v, resolve(v));
-                    };
-
-                    try {
-                        window.webpackChunksteamui.push([
-                            [Math.random()],
-                            {},
-                            r => finish(r)
-                        ]);
-                    } catch (e) {
-                        finish(null, e);
-                    }
-
-                    setTimeout(
-                        () =>
-                            finish(
-                                null,
-                                Error(
-                                    "Failed to acquire Steam Webpack runtime"
-                                )
-                            ),
-                        5e3
-                    );
-                });
+        const req = window.__steam_require || await new Promise((resolve, reject) => {
+            if (typeof window.webpackChunksteamui !== "object") return reject(Error("Steam Webpack runtime not available"));
+            let done = 0, finish = (v,e) => {
+                if (done) return;
+                done = 1;
+                e ? reject(e) : (window.__steam_require = v, resolve(v));
             };
-
-            const req = await getSteamRequire();
-
-            const findLEDModule = r => {
-                for (const id of Object.keys(r.m)) {
-                    try {
-                        const m = r(id);
-
-                        if (
-                            m?.Om?.GetState &&
-                            m.Om.SetColor &&
-                            m.Om.SetEffect
-                        ) {
-                            return m;
-                        }
-                    } catch {}
-                }
-
-                throw Error("LEDManager module not found");
-            };
-
-            const LED = findLEDModule(req).Om;
-
-            const getDevices = async () => {
-                const r = await LED.GetState({});
-
-                if (!r.BSuccess()) {
-                    throw Error("LEDManager.GetState failed");
-                }
-
-                return r.Body().toObject()?.state?.devices ?? [];
-            };
-
-            const setColor = (id, i, color) =>
-                LED.SetColor({
-                    device_id: id,
-                    color_index: i,
-                    color
-                });
-
-            const setEffect = (id, effect) =>
-                LED.SetEffect({
-                    device_id: id,
-                    effect
-                });
-
-            const apps = appStore.allApps.filter(
-                a => a?.app_type === 1073741824
-            );
-
-            if (!apps.length) {
-                throw Error("No non-Steam apps found.");
-            }
-
-            const gameIdString = String(gameId);
-
-            const app =
-                apps.find(
-                    a => String(a?.m_gameid) === gameIdString
-                ) ||
-                apps.find(
-                    a => String(a?.appid) === gameIdString
-                );
-
-            if (!app) {
-                throw Error(
-                    `Non-Steam game not found: ${gameName || gameIdString}`
-                );
-            }
-
-            const {
-                appid,
-                display_name,
-                icon_data,
-                icon_data_format
-            } = app;
-
-            console.log(
-                `LED palette game: ${display_name || gameName || gameIdString} (${appid})`
-            );
-
-            if (
-                typeof icon_data !== "string" ||
-                !icon_data.length
-            ) {
-                throw Error(
-                    `No icon_data found for ${
-                        display_name || gameName || gameIdString
-                    } (${appid})`
-                );
-            }
-
-            const format = String(
-                icon_data_format || "png"
-            ).toLowerCase();
-
-            const mime = {
-                ico: "image/x-icon",
-                jpg: "image/jpeg",
-                jpeg: "image/jpeg",
-                webp: "image/webp",
-                gif: "image/gif",
-                bmp: "image/bmp"
-            }[format] || "image/png";
-
-            console.log(`Icon format: ${format}`);
-            console.log(
-                `Icon data size: ${icon_data.length} characters`
-            );
-
-            const img = new Image();
-
-            img.src = `data:${mime};base64,${icon_data}`;
-
-            await new Promise((resolve, reject) => {
-                img.onload = resolve;
-
-                img.onerror = () =>
-                    reject(
-                        Error(
-                            `Failed to decode Steam icon (${format})`
-                        )
-                    );
-            });
-
-            console.log(
-                `Icon decoded: ${img.naturalWidth}x${img.naturalHeight}`
-            );
-
-            const extractPalette = (
-                img,
-                count = PALETTE_SIZE
-            ) => {
-                const canvas =
-                    document.createElement("canvas");
-
-                canvas.width = img.naturalWidth;
-                canvas.height = img.naturalHeight;
-
-                const ctx = canvas.getContext(
-                    "2d",
-                    {
-                        willReadFrequently: true
-                    }
-                );
-
-                ctx.drawImage(img, 0, 0);
-
-                const { data } = ctx.getImageData(
-                    0,
-                    0,
-                    canvas.width,
-                    canvas.height
-                );
-
-                const total =
-                    canvas.width * canvas.height;
-
-                const step = Math.max(
-                    1,
-                    Math.floor(total / MAX_SAMPLES)
-                );
-
-                const colors = new Map();
-
-                const q = v =>
-                    Math.floor(v / QUANTIZE) *
-                        QUANTIZE +
-                    QUANTIZE / 2;
-
-                for (
-                    let p = 0;
-                    p < total;
-                    p += step
-                ) {
-                    const o = p * 4;
-
-                    if (data[o + 3] < 128) {
-                        continue;
-                    }
-
-                    const c = [
-                        q(data[o]),
-                        q(data[o + 1]),
-                        q(data[o + 2])
-                    ];
-
-                    const k = c.join(",");
-
-                    colors.set(
-                        k,
-                        (colors.get(k) || 0) + 1
-                    );
-                }
-
-                if (!colors.size) {
-                    throw Error(
-                        "Icon contains no usable pixels"
-                    );
-                }
-
-                const sorted = [...colors]
-                    .map(([k, count]) => ({
-                        color: k.split(",").map(Number),
-                        count
-                    }))
-                    .sort(
-                        (a, b) =>
-                            b.count - a.count
-                    );
-
-                const dist = (a, b) =>
-                    Math.hypot(
-                        a[0] - b[0],
-                        a[1] - b[1],
-                        a[2] - b[2]
-                    );
-
-                const palette = [];
-
-                for (const { color } of sorted) {
-                    if (
-                        palette.every(
-                            c =>
-                                dist(color, c) >=
-                                MIN_DISTANCE
-                        )
-                    ) {
-                        palette.push(color);
-
-                        if (
-                            palette.length >=
-                            count
-                        ) {
-                            break;
-                        }
-                    }
-                }
-
-                return palette;
-            };
-
-            const palette = extractPalette(img);
-
-            if (!palette.length) {
-                throw Error(
-                    "Could not extract a usable color palette"
-                );
-            }
-
-            const hex = c =>
-                "#" +
-                c
-                    .map(v =>
-                        v
-                            .toString(16)
-                            .padStart(2, "0")
-                    )
-                    .join("");
-
-            console.log(
-                "Palette:",
-                palette.map(hex)
-            );
-
-            const ledPalette = palette.map(
-                ([r, g, b]) => ({
-                    r: r / 255,
-                    g: g / 255,
-                    b: b / 255
-                })
-            );
-
-            const devices = await getDevices();
-
-            if (!devices.length) {
-                console.log("No LED devices found.");
-                return;
-            }
-
-            const snapshot = devices.map(d => ({
-                id: d.id,
-                effect: d.effect,
-                colors: (d.color ?? []).map(
-                    ({ r, g, b }) => ({
-                        r,
-                        g,
-                        b
-                    })
-                )
-            }));
-
-            console.log(
-                "Original LED state captured."
-            );
-
-            const colorUpdates = devices.flatMap(
-                d => {
-                    const n = d.color?.length ?? 0;
-
-                    return Array.from(
-                        { length: n },
-                        (_, i) => {
-                            const c =
-                                ledPalette[
-                                    Math.min(
-                                        Math.floor(
-                                            (i *
-                                                palette.length) /
-                                                n
-                                        ),
-                                        ledPalette.length -
-                                            1
-                                    )
-                                ];
-
-                            return setColor(
-                                d.id,
-                                i,
-                                c
-                            );
-                        }
-                    );
-                }
-            );
-
-            await Promise.all(colorUpdates);
-
-            console.log(
-                "All palette colors applied."
-            );
-
-            await Promise.all(
-                devices
-                    .filter(d =>
-                        d.effects_available?.includes(
-                            "breath"
-                        )
-                    )
-                    .map(d =>
-                        setEffect(
-                            d.id,
-                            "breath"
-                        )
-                    )
-            );
-
-            console.log(
-                "Breathing effect enabled on all available devices."
-            );
-
-            console.log(
-                "Breathing for 30 seconds..."
-            );
-
-            await sleep(30_000);
-
-            console.log(
-                "30 seconds complete. Restoring original LED state..."
-            );
-
-            const currentDevices =
-                await getDevices();
-
-            const restoreColors = [];
-            const restoreEffects = [];
-
-            for (const saved of snapshot) {
-                const current =
-                    currentDevices.find(
-                        d => d.id === saved.id
-                    );
-
-                if (!current) {
-                    console.log(
-                        `Device ${saved.id} is no longer available.`
-                    );
-                    continue;
-                }
-
-                saved.colors.forEach(
-                    (color, i) =>
-                        restoreColors.push(
-                            setColor(
-                                saved.id,
-                                i,
-                                color
-                            )
-                        )
-                );
-
-                if (
-                    saved.effect !== undefined &&
-                    saved.effect !== null
-                ) {
-                    restoreEffects.push(
-                        setEffect(
-                            saved.id,
-                            saved.effect
-                        )
-                    );
-                }
-            }
-
-            await Promise.all(
-                restoreColors
-            );
-
-            await Promise.all(
-                restoreEffects
-            );
-
-            console.log(
-                `${display_name || gameName || gameIdString} temporary palette finished.`
-            );
-
-            console.log(
-                "Original LED snapshot restored."
-            );
-        } catch (error) {
-            console.log(
-                "Game LED palette error:",
-                error
-            );
-        }
-    }
-
-    (function initDesktopWatcher() {
-        const originalLog = console.log;
-
-        console.log = function (...args) {
             try {
-                const line = args.join(" ");
+                window.webpackChunksteamui.push([[Math.random()],{},r => finish(r)]);
+            } catch(e) {
+                finish(null,e);
+            }
+            setTimeout(() => finish(null,Error("Failed to acquire Steam Webpack runtime")),5e3);
+        });
 
-                if (
-                    line.includes("OnGameActionUserRequest") &&
-                    line.includes("LaunchApp CreatingProcess")
-                ) {
-                    const match = line.match(/OnGameActionUserRequest:\s*(\d+)/);
+        let LED;
+        for (const id of Object.keys(req.m)) {
+            try {
+                const m = req(id);
+                if (m?.Om?.GetState && m.Om.SetColor && m.Om.SetEffect) {
+                    LED = m.Om;
+                    break;
+                }
+            } catch {}
+        }
 
-                    if (match) {
-                        const appId = match[1];
+        if (!LED) throw Error("LEDManager module not found");
 
-                        if (appId.length >= 18 && appId.length <= 20) {
-                            const app = appStore.allApps.find(
-                                app => String(app.m_gameid) === appId
-                            );
+        const getDevices = async () => {
+            const r = await LED.GetState({});
+            if (!r.BSuccess()) throw Error("LEDManager.GetState failed");
+            return r.Body().toObject()?.state?.devices ?? [];
+        };
 
-                            if (app && app.app_type === 1073741824) {
-                                desktopGameRunning = true;
-                                desktopCurrentAppId = appId;
-                                desktopCurrentGameName = app.display_name || null;
-                            }
+        const color = (id,i,c) => LED.SetColor({device_id:id,color_index:i,color:c});
+        const effect = (id,e) => LED.SetEffect({device_id:id,effect:e});
+
+        const apps = appStore.allApps.filter(a => a?.app_type === 1073741824);
+        const gid = String(gameId);
+        const app = apps.find(a => String(a?.m_gameid) === gid) || apps.find(a => String(a?.appid) === gid);
+
+        if (!app) throw Error(`Non-Steam game not found: ${gameName || gid}`);
+
+        const {appid,display_name,icon_data,icon_data_format} = app;
+
+        if (!icon_data) {
+            throw Error(`No icon_data found for ${display_name || gameName || gid} (${appid})`);
+        }
+
+        const format = String(icon_data_format || "png").toLowerCase();
+        const mime = ({
+            ico:"image/x-icon",
+            jpg:"image/jpeg",
+            jpeg:"image/jpeg",
+            webp:"image/webp",
+            gif:"image/gif",
+            bmp:"image/bmp"
+        })[format] || "image/png";
+
+        const img = new Image();
+        img.src = `data:${mime};base64,${icon_data}`;
+
+        await new Promise((resolve,reject) => {
+            img.onload = resolve;
+            img.onerror = () => reject(Error(`Failed to decode Steam icon (${format})`));
+        });
+
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+
+        const ctx = canvas.getContext("2d",{willReadFrequently:true});
+        ctx.drawImage(img,0,0);
+
+        const {data} = ctx.getImageData(0,0,canvas.width,canvas.height);
+        const total = canvas.width * canvas.height;
+        const step = Math.max(1,Math.floor(total/MAX_SAMPLES));
+        const colors = new Map();
+        const q = v => Math.floor(v/QUANTIZE)*QUANTIZE + QUANTIZE/2;
+
+        for (let p=0;p<total;p+=step) {
+            const o=p*4;
+            if (data[o+3]<128) continue;
+
+            const c=[q(data[o]),q(data[o+1]),q(data[o+2])];
+            const k=c.join(",");
+
+            colors.set(k,(colors.get(k)||0)+1);
+        }
+
+        if (!colors.size) throw Error("Icon contains no usable pixels");
+
+        const dist = (a,b) =>
+            Math.hypot(
+                a[0]-b[0],
+                a[1]-b[1],
+                a[2]-b[2]
+            );
+
+        const palette = [];
+
+        for (const [k] of [...colors].sort((a,b) => b[1]-a[1])) {
+            const c=k.split(",").map(Number);
+
+            if (palette.every(x => dist(c,x)>=MIN_DISTANCE)) {
+                palette.push(c);
+                if (palette.length===PALETTE_SIZE) break;
+            }
+        }
+
+        if (!palette.length) throw Error("Could not extract a usable color palette");
+
+        const ledPalette = palette.map(([r,g,b]) => ({
+            r:r/255,
+            g:g/255,
+            b:b/255
+        }));
+
+        const devices = await getDevices();
+
+        if (!devices.length) return;
+
+        if (!window.__watcherLedSnapshot) {
+            window.__watcherLedSnapshot = devices.map(d => ({
+                id:d.id,
+                effect:d.effect,
+                colors:(d.color??[]).map(({r,g,b}) => ({r,g,b}))
+            }));
+        }
+
+        if (generation !== window.__watcherLedGeneration) return;
+
+        await Promise.all(
+            devices.flatMap(d => {
+                const n=d.color?.length??0;
+
+                return Array.from({length:n},(_,i) =>
+                    color(
+                        d.id,
+                        i,
+                        ledPalette[
+                            Math.min(
+                                Math.floor(i*palette.length/n),
+                                ledPalette.length-1
+                            )
+                        ]
+                    )
+                );
+            })
+        );
+
+        await Promise.all(
+            devices
+                .filter(d => d.effects_available?.includes("breath"))
+                .map(d => effect(d.id,"breath"))
+        );
+
+        await sleep(30e3);
+
+        if (generation !== window.__watcherLedGeneration) return;
+
+        const current = await getDevices();
+        const snapshot = window.__watcherLedSnapshot;
+
+        if (!snapshot) return;
+
+        await Promise.all(
+            snapshot.flatMap(s => {
+                const d=current.find(x => x.id===s.id);
+
+                if (!d) return [];
+
+                return [
+                    ...s.colors.map((c,i) => color(s.id,i,c)),
+                    ...(s.effect != null ? [effect(s.id,s.effect)] : [])
+                ];
+            })
+        );
+
+        if (generation === window.__watcherLedGeneration) {
+            window.__watcherLedSnapshot = null;
+        }
+    } catch (e) {
+        console.log("Game LED palette error:",e);
+    }
+}
+
+(function() {
+    console.log = new Proxy(console.log,{
+        apply(target,thisArg,args) {
+            try {
+                const line=args.join(" ");
+
+                if (line.includes("OnGameActionUserRequest") && line.includes("LaunchApp CreatingProcess")) {
+                    const m=line.match(/OnGameActionUserRequest:\s*(\d+)/);
+
+                    if (m && m[1].length>=18 && m[1].length<=20) {
+                        const app=appStore.allApps.find(a => String(a.m_gameid)===m[1]);
+
+                        if (app?.app_type===1073741824) {
+                            desktopGameRunning=true;
+                            desktopCurrentAppId=m[1];
+                            desktopCurrentGameName=app.display_name||null;
                         }
                     }
                 }
@@ -3190,349 +2897,263 @@ watch_code = r'''if (!window.__watcherInjected) {
                     desktopGameRunning &&
                     (
                         line.includes("Removing overlay browser window") ||
-                        line.includes(
-                            "NetworkDiagnosticsStore - unregistering for detailed connection state updates"
-                        )
+                        line.includes("NetworkDiagnosticsStore - unregistering for detailed connection state updates")
                     )
                 ) {
-                    desktopGameRunning = false;
+                    desktopGameRunning=false;
+                    const id=desktopCurrentAppId;
 
-                    const appIdToTerminate = desktopCurrentAppId;
-                    const gameName = desktopCurrentGameName;
+                    if (id) setTimeout(() => {
+                        try {
+                            SteamClient.Apps.TerminateApp(id,false);
 
-                    if (appIdToTerminate) {
-                        setTimeout(() => {
-                            try {
-                                SteamClient.Apps.TerminateApp(
-                                    appIdToTerminate,
-                                    false
-                                );
-
-                                if (desktopCurrentAppId === appIdToTerminate) {
-                                    desktopCurrentAppId = null;
-                                    desktopCurrentGameName = null;
-                                }
-                            } catch {}
-                        }, 15000);
-                    }
+                            if (desktopCurrentAppId===id) {
+                                desktopCurrentAppId=desktopCurrentGameName=null;
+                            }
+                        } catch {}
+                    },15e3);
                 }
             } catch {}
-        };
-    })();
 
-    (function initGameWatcher() {
-        const MIN_STATE_GAP_MS = 1000;
-        const RAPID_TRANSITION_MS = 250;
-        const TERMINATION_DELAY_MS = 10000;
-        const EXIT_CONFIRMATION_MS = 10000;
-        const MIN_GAME_RUNTIME_MS = 30000;
-
-        const state = {
-            gameId: null,
-            gameName: null,
-            launchTime: 0,
-            inferredRunning: false,
-            watchersEnabled: false,
-            terminateScheduled: false,
-            possibleExit: false,
-            exitCandidateTime: 0,
-            qamActive: false,
-            overlaySequence: [],
-            lastOverlayActive: null,
-            lastOverlayChange: 0,
-            terminateTimer: null,
-            exitConfirmationTimer: null
-        };
-
-        function resetState(gameId, gameName) {
-            if (state.terminateTimer) {
-                clearTimeout(state.terminateTimer);
-                state.terminateTimer = null;
-            }
-
-            if (state.exitConfirmationTimer) {
-                clearTimeout(state.exitConfirmationTimer);
-                state.exitConfirmationTimer = null;
-            }
-
-            state.gameId = String(gameId);
-            state.gameName = gameName || null;
-            state.launchTime = Date.now();
-            state.inferredRunning = true;
-            state.watchersEnabled = true;
-            state.terminateScheduled = false;
-            state.possibleExit = false;
-            state.exitCandidateTime = 0;
-            state.qamActive = false;
-            state.overlaySequence.length = 0;
-            state.lastOverlayActive = null;
-            state.lastOverlayChange = 0;
-
-            runGameLEDPalette(
-                state.gameId,
-                state.gameName
-            );
+            return Reflect.apply(target,thisArg,args);
         }
+    });
+})();
 
-        function cancelExitConfirmation() {
-            if (state.exitConfirmationTimer) {
-                clearTimeout(state.exitConfirmationTimer);
-                state.exitConfirmationTimer = null;
-            }
+(function() {
+    const
+        MIN_STATE_GAP_MS=1e3,
+        RAPID_TRANSITION_MS=250,
+        TERMINATION_DELAY_MS=1e4,
+        EXIT_CONFIRMATION_MS=1e4,
+        MIN_GAME_RUNTIME_MS=3e4;
 
-            state.possibleExit = false;
-            state.exitCandidateTime = 0;
-        }
+    const s={
+        gameId:null,
+        gameName:null,
+        launchTime:0,
+        inferredRunning:false,
+        watchersEnabled:false,
+        terminateScheduled:false,
+        possibleExit:false,
+        exitCandidateTime:0,
+        qamActive:false,
+        lastOverlayActive:null,
+        lastOverlayChange:0,
+        terminateTimer:null,
+        exitConfirmationTimer:null
+    };
 
-        function activateQAM() {
-            if (!state.watchersEnabled) {
-                return;
-            }
+    const clearExit = () => {
+        if (s.exitConfirmationTimer) clearTimeout(s.exitConfirmationTimer);
 
-            if (state.possibleExit) {
-                cancelExitConfirmation();
-            }
+        s.exitConfirmationTimer=null;
+        s.possibleExit=false;
+        s.exitCandidateTime=0;
+    };
 
-            state.qamActive = true;
-        }
+    const reset = (id,name) => {
+        if (s.terminateTimer) clearTimeout(s.terminateTimer);
 
-        try {
-            if (!console.log.__steamDetectQAMHook) {
-                const originalConsoleLog = console.log;
+        clearExit();
 
-                function steamDetectConsoleLog() {
-                    try {
-                        const text = Array.from(arguments)
-                            .map(value => {
-                                try {
-                                    return typeof value === "string"
-                                        ? value
-                                        : String(value);
-                                } catch {
-                                    return "";
-                                }
-                            })
-                            .join(" ");
+        Object.assign(s,{
+            gameId:String(id),
+            gameName:name||null,
+            launchTime:Date.now(),
+            inferredRunning:true,
+            watchersEnabled:true,
+            terminateScheduled:false,
+            possibleExit:false,
+            exitCandidateTime:0,
+            qamActive:false,
+            lastOverlayActive:null,
+            lastOverlayChange:0,
+            terminateTimer:null
+        });
 
-                        if (
-                            text.includes(
-                                "onGlobalMenuButtonDown SP BPM_uid0"
-                            )
-                        ) {
-                            activateQAM();
-                        }
-                    } catch {}
+        runGameLEDPalette(s.gameId,s.gameName);
+    };
 
-                    return originalConsoleLog.apply(this, arguments);
-                }
+    const activateQAM = () => {
+        if (!s.watchersEnabled) return;
 
-                steamDetectConsoleLog.__steamDetectQAMHook = true;
-                console.log = steamDetectConsoleLog;
-            }
-        } catch {}
+        if (s.possibleExit) clearExit();
 
-        function scheduleTermination() {
-            if (
-                !state.watchersEnabled ||
-                !state.gameId ||
-                state.terminateScheduled
-            ) {
-                return;
-            }
+        s.qamActive=true;
+    };
 
-            state.terminateScheduled = true;
+    try {
+        if (!console.log.__steamDetectQAMHook) {
+            const original=console.log;
 
-            const gameToTerminate = state.gameId;
-
-            state.terminateTimer = setTimeout(() => {
-                state.terminateTimer = null;
-
-                if (state.gameId !== gameToTerminate) {
-                    return;
-                }
-
+            const hook=function(...args) {
                 try {
-                    SteamClient.Apps.TerminateApp(
-                        gameToTerminate,
-                        false
-                    );
+                    if (
+                        args.map(v => {
+                            try {
+                                return typeof v==="string" ? v : String(v);
+                            } catch {
+                                return "";
+                            }
+                        })
+                        .join(" ")
+                        .includes("onGlobalMenuButtonDown SP BPM_uid0")
+                    ) {
+                        activateQAM();
+                    }
                 } catch {}
-            }, TERMINATION_DELAY_MS);
-        }
 
-        function startExitConfirmation() {
+                return original.apply(this,args);
+            };
+
+            hook.__steamDetectQAMHook=true;
+            console.log=hook;
+        }
+    } catch {}
+
+    const terminate = () => {
+        if (!s.watchersEnabled || !s.gameId || s.terminateScheduled) return;
+
+        s.terminateScheduled=true;
+
+        const id=s.gameId;
+
+        s.terminateTimer=setTimeout(() => {
+            s.terminateTimer=null;
+
+            if (s.gameId===id) {
+                try {
+                    SteamClient.Apps.TerminateApp(id,false);
+                } catch {}
+            }
+        },TERMINATION_DELAY_MS);
+    };
+
+    const confirmExit = () => {
+        if (
+            !s.watchersEnabled ||
+            !s.gameId ||
+            s.terminateScheduled ||
+            s.possibleExit ||
+            s.qamActive
+        ) return;
+
+        s.possibleExit=true;
+        s.exitCandidateTime=Date.now();
+
+        const id=s.gameId;
+        const time=s.exitCandidateTime;
+
+        s.exitConfirmationTimer=setTimeout(() => {
+            s.exitConfirmationTimer=null;
+
             if (
-                !state.watchersEnabled ||
-                !state.gameId ||
-                state.terminateScheduled ||
-                state.possibleExit ||
-                state.qamActive
+                s.gameId!==id ||
+                !s.watchersEnabled ||
+                !s.possibleExit ||
+                s.exitCandidateTime!==time
+            ) return;
+
+            if (
+                s.qamActive ||
+                !s.inferredRunning ||
+                s.lastOverlayActive===0
             ) {
+                clearExit();
                 return;
             }
 
-            state.possibleExit = true;
-            state.exitCandidateTime = Date.now();
+            s.possibleExit=false;
+            s.exitCandidateTime=0;
 
-            const gameToConfirm = state.gameId;
-            const candidateTime = state.exitCandidateTime;
+            terminate();
+        },EXIT_CONFIRMATION_MS);
+    };
 
-            state.exitConfirmationTimer = setTimeout(() => {
-                state.exitConfirmationTimer = null;
+    try {
+        SteamClient.Apps.RegisterForGameActionStart((_actionId,id,action) => {
+            if (action!=="LaunchApp") return;
 
-                if (
-                    state.gameId !== gameToConfirm ||
-                    !state.watchersEnabled ||
-                    !state.possibleExit ||
-                    state.exitCandidateTime !== candidateTime
-                ) {
-                    return;
-                }
-
-                if (state.qamActive) {
-                    cancelExitConfirmation();
-                    return;
-                }
-
-                if (!state.inferredRunning || state.lastOverlayActive === 0) {
-                    cancelExitConfirmation();
-                    return;
-                }
-
-                state.possibleExit = false;
-                state.exitCandidateTime = 0;
-
-                scheduleTermination();
-            }, EXIT_CONFIRMATION_MS);
-        }
-
-        try {
-            SteamClient.Apps.RegisterForGameActionStart(
-                (_actionId, gameId, action) => {
-                    if (action !== "LaunchApp") {
-                        return;
-                    }
-
-                    const gameIdString = String(gameId);
-
-                    const app = appStore.allApps.find(
-                        app => String(app.m_gameid) === gameIdString
-                    );
-
-                    if (!app || app.app_type !== 1073741824) {
-                        return;
-                    }
-
-                    resetState(
-                        gameIdString,
-                        app.display_name || null
-                    );
-                }
+            const gameId=String(id);
+            const app=appStore.allApps.find(
+                a => String(a.m_gameid)===gameId
             );
-        } catch {}
 
-        try {
-            SteamClient.GameSessions.RegisterForAppLifetimeNotifications(
-                evt => {
-                    if (!state.watchersEnabled) {
-                        return;
-                    }
+            if (app?.app_type===1073741824) {
+                reset(gameId,app.display_name);
+            }
+        });
+    } catch {}
 
-                    if (
-                        evt.bRunning === false &&
-                        state.inferredRunning &&
-                        state.gameId &&
-                        String(evt.unAppID) === String(state.gameId)
-                    ) {
-                        state.inferredRunning = false;
-                        cancelExitConfirmation();
-                    } else if (
-                        evt.bRunning === true &&
-                        !state.inferredRunning &&
-                        state.gameId &&
-                        String(evt.unAppID) === String(state.gameId)
-                    ) {
-                        state.inferredRunning = true;
-                    }
-                }
-            );
-        } catch {}
+    try {
+        SteamClient.GameSessions.RegisterForAppLifetimeNotifications(evt => {
+            if (
+                !s.watchersEnabled ||
+                String(evt.unAppID)!==String(s.gameId)
+            ) return;
 
-        try {
-            const origSet = SteamClient.Overlay.SetOverlayState;
+            if (evt.bRunning===false && s.inferredRunning) {
+                s.inferredRunning=false;
+                clearExit();
+            } else if (evt.bRunning===true && !s.inferredRunning) {
+                s.inferredRunning=true;
+            }
+        });
+    } catch {}
 
-            SteamClient.Overlay.SetOverlayState = function (
-                gameId,
-                stateNum
+    try {
+        const original=SteamClient.Overlay.SetOverlayState;
+
+        SteamClient.Overlay.SetOverlayState=function(gameId,stateNum) {
+            if (
+                !s.watchersEnabled ||
+                String(gameId)!==String(s.gameId)
+            ) {
+                return original.apply(this,arguments);
+            }
+
+            const now=Date.now();
+            const prev=s.lastOverlayActive;
+            const gap=s.lastOverlayChange
+                ? now-s.lastOverlayChange
+                : null;
+
+            if (s.qamActive) {
+                if (stateNum===0) s.qamActive=false;
+            } else if (
+                gap===null ||
+                gap>=RAPID_TRANSITION_MS
             ) {
                 if (
-                    !state.watchersEnabled ||
-                    String(gameId) !== String(state.gameId)
+                    s.inferredRunning &&
+                    stateNum===3 &&
+                    prev===0 &&
+                    gap>=MIN_STATE_GAP_MS &&
+                    now-s.launchTime>MIN_GAME_RUNTIME_MS &&
+                    !s.terminateScheduled &&
+                    !s.possibleExit
                 ) {
-                    return origSet.apply(this, arguments);
+                    confirmExit();
                 }
 
-                const now = Date.now();
-                const previousState = state.lastOverlayActive;
-                const timeSincePreviousState =
-                    state.lastOverlayChange > 0
-                        ? now - state.lastOverlayChange
-                        : null;
-
-                state.overlaySequence.push({
-                    time: now,
-                    active: stateNum
-                });
-
-                if (state.overlaySequence.length > 20) {
-                    state.overlaySequence.shift();
+                if (
+                    s.possibleExit &&
+                    stateNum===0
+                ) {
+                    clearExit();
                 }
+            } else if (s.possibleExit) {
+                clearExit();
+            }
 
-                if (state.qamActive) {
-                    if (stateNum === 0) {
-                        state.qamActive = false;
-                    }
+            s.lastOverlayActive=stateNum;
+            s.lastOverlayChange=now;
 
-                    state.lastOverlayActive = stateNum;
-                    state.lastOverlayChange = now;
-
-                    return origSet.apply(this, arguments);
-                }
-
-                const isRapidTransition =
-                    timeSincePreviousState !== null &&
-                    timeSincePreviousState < RAPID_TRANSITION_MS;
-
-                if (isRapidTransition) {
-                    if (state.possibleExit) {
-                        cancelExitConfirmation();
-                    }
-                } else {
-                    if (
-                        state.inferredRunning &&
-                        stateNum === 3 &&
-                        previousState === 0 &&
-                        timeSincePreviousState !== null &&
-                        now - state.launchTime > MIN_GAME_RUNTIME_MS &&
-                        !state.terminateScheduled &&
-                        !state.possibleExit &&
-                        timeSincePreviousState >= MIN_STATE_GAP_MS
-                    ) {
-                        startExitConfirmation();
-                    }
-
-                    if (state.possibleExit && stateNum === 0) {
-                        cancelExitConfirmation();
-                    }
-                }
-
-                state.lastOverlayActive = stateNum;
-                state.lastOverlayChange = now;
-
-                return origSet.apply(this, arguments);
-            };
-        } catch {}
-    })();
+            return original.apply(this,arguments);
+        };
+    } catch {}
+})();
 }'''
 
 def inject_watcher_once(ws_socket, watch_code):
